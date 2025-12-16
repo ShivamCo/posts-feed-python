@@ -1,64 +1,57 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, File, UploadFile, Form, Depends
+from app.schemas import PostCreate, PostResponse
+from app.db import Post, create_db_and_tables, get_async_session
+from sqlalchemy.ext.asyncio import AsyncSession
+from contextlib import asynccontextmanager
+from sqlalchemy import select
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app:FastAPI):
+    await create_db_and_tables()
+    yield
 
-
-
-text_posts = {
-    1: {
-        "title": "Getting Started with Python",
-        "content": "Python is a versatile programming language that is easy to learn and widely used in web development, data science, and automation."
-    },
-    2: {
-        "title": "Understanding Frontend Development",
-        "content": "Frontend development focuses on building user interfaces using HTML, CSS, and JavaScript to create engaging user experiences."
-    },
-    3: {
-        "title": "Why Clean Code Matters",
-        "content": "Writing clean and readable code makes maintenance easier and helps teams collaborate more effectively over time."
-    },
-    4: {
-        "title": "Tips for Learning Programming Faster",
-        "content": "Consistent practice, building small projects, and reading other people’s code can significantly speed up the learning process."
-    },
-    5: {
-        "title": "Introduction to REST APIs",
-        "content": "REST APIs allow different systems to communicate with each other over HTTP using standard request methods."
-    },
-    6: {
-        "title": "Common Mistakes New Developers Make",
-        "content": "New developers often rush through concepts instead of understanding fundamentals, which can slow progress later."
-    },
-    7: {
-        "title": "The Importance of Version Control",
-        "content": "Version control systems like Git help track changes, manage collaboration, and prevent code loss."
-    },
-    8: {
-        "title": "How to Stay Motivated While Coding",
-        "content": "Setting small goals and celebrating progress can help maintain motivation during long coding sessions."
-    },
-    9: {
-        "title": "Debugging Techniques That Work",
-        "content": "Effective debugging involves understanding the problem, checking logs, and testing small changes step by step."
-    },
-    10: {
-        "title": "Building Real-World Projects",
-        "content": "Creating real-world projects helps reinforce concepts and builds a strong portfolio for job opportunities."
-    }
-}
+app = FastAPI(lifespan=lifespan)
 
 
+@app.post("/upload")
+async def upload_file(
 
-@app.get("/get-all-posts")
-def get_all_posts(limit : int = None):
-    if limit:
-        return list(text_posts.values())[:limit]
-    return text_posts
+    file: UploadFile = File(...),
+    caption: str = Form(""),  # <-- Dependency Injection, Async Session Depends on get_async_session
+    session: AsyncSession = Depends(get_async_session),
 
+) : 
+    post = Post(
+        caption = caption,
+        url="dummyurl",
+        file_type="photo",
+        file_name="Dummy name"
+    )
 
-@app.get("/get-post/{id}")
-def get_post(id: int):
+    session.add(post)
+    await session.commit()
+    await session.refresh(post)
 
-    if id not in text_posts:
-        raise HTTPException(status_code=404, detail="Post not found.")
-    return text_posts.get(id)
+    return post
+
+@app.get("/feed")
+async def get_feed(
+    session: AsyncSession = Depends(get_async_session)
+): 
+    
+    result = await session.execute(select(Post).order_by(Post.created_at.desc()) )  # <-- SqlAlchemy query
+    posts = [row[0] for row in result.all()]
+    
+    
+    posts_data = []
+    for post in posts:
+        posts_data.append({
+                "id" : str(post.id),
+                "caption": post.caption,
+                "url": post.url,
+                "file_type": post.file_type,
+                "file_name" : post.file_name,
+                "created_at": post.created_at.isoformat()
+            })
+        
+    return {"posts": posts_data}
